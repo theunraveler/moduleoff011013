@@ -1,0 +1,9 @@
+name = Date Today
+description = Adds a link to add the current date to a date field
+package = Date/Time
+core = 7.x
+
+dependencies[] = date
+dependencies[] = field_formatter_settings
+
+files[] = date_today.test

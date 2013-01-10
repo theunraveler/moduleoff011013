@@ -1,0 +1,235 @@
+<?php
+
+/**
+ * @file
+ * Main module file for Date Today module.
+ */
+
+module_load_include('inc', 'date_today', 'date_today.admin');
+
+/**
+ * Implementation of hook_help().
+ */
+function date_today_help($path, $args) {
+  if ($path === 'admin/help#date_today') {
+    return '<p>' . t('The Date Today module allows site builders to place a button next to date fields that, when clicked, will change the value of the date field to the current date and time.') . '</p>';
+  }
+}
+
+/**
+ * Implementation of hook_field_formatter_info_alter().
+ */
+function date_today_field_formatter_info_alter(&$info) {
+  foreach (array('date_default', 'format_interval', 'date_plain') as $formatter) {
+    $info[$formatter]['settings']['date_today'] = FALSE;
+  }
+}
+
+/**
+ * Implementation of hook_field_attach_view_alter().
+ */
+function date_today_field_attach_view_alter(&$output, $context) {
+  foreach (element_children($output) as $element) {
+    if (!empty($output[$element]['#field_name']) && _date_today_can_edit($element, $context['entity_type'], $context['entity'])) {
+      list(,,$bundle) = entity_extract_ids($context['entity_type'], $context['entity']);
+      $instance = field_info_instance($context['entity_type'], $element, $bundle);
+      $key = isset($instance['display'][$context['view_mode']]) ? $context['view_mode'] : 'default';
+      if (!empty($instance['display'][$key]['settings']['date_today'])) {
+        foreach (element_children($output[$element]) as $delta) {
+          $output[$element][$delta] = drupal_get_form('date_today_set_date_form', $output[$element][$delta], array(
+            'entity_type' => $context['entity_type'],
+            'entity' => $context['entity'],
+            'bundle' => $bundle,
+            'field_name' => $element,
+            'delta' => $delta,
+            'view_mode' => $context['view_mode'],
+          ));
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Form callback to generate a Date Today form.
+ *
+ * @param ...
+ *   The normal form builder variables.
+ * @param array $existing
+ *   A render array of the current field output.
+ * @param object $entity
+ *   The entity being viewed.
+ */
+function date_today_set_date_form($form, &$form_state, $existing, $data) {
+  list($id,,) = entity_extract_ids($data['entity_type'], $data['entity']);
+  $wrapper_id = "date-today-{$data['entity_type']}-{$id}-{$data['field_name']}-{$data['delta']}";
+  $form = array('#prefix' => '<div id="' . $wrapper_id . '">', '#suffix' => '</div>');
+  $form['#attached']['css'][] = drupal_get_path('module', 'date_today') . '/date-today.css';
+  $form['#attributes']['class'] = array('date-today');
+  $form['element'] = $existing;
+
+  // If the date field collects a "To" date, provide an extra form element to
+  // decide which date part ("From" or "To") to update.
+  $field = field_info_field($data['field_name']);
+  if (!empty($field['settings']['todate'])) {
+    $form['date_component'] = array(
+      '#type' => 'select',
+      '#title' => t('Update'),
+      '#options' => array(
+        'value' => t('start date only'),
+        'value2' => t('end date only'),
+        'both' => t('start and end dates'),
+      ),
+      '#default_value' => 'value',
+    );
+  }
+  $form['date_today'] = array(
+    '#type' => 'submit',
+    '#value' => t('Set to Current Date and Time'),
+    '#submit' => array('date_today_set_date_submit'),
+    '#ajax' => array(
+      'wrapper' => $wrapper_id,
+      'callback' => 'date_today_replace_date_display',
+    ),
+  );
+
+  // Store some data for later.
+  if (empty($form_state['build_info']['storage'])) {
+    $form_state['build_info']['storage'] = array();
+  }
+  $form_state['build_info']['storage'] += $data;
+
+  return $form;
+}
+
+/**
+ * Submit callback for Date Today forms.
+ */
+function date_today_set_date_submit($form, &$form_state) {
+  $data = $form_state['build_info']['storage'];
+  $entity = $data['entity'];
+  $langcode = entity_language($data['entity_type'], $entity);
+
+  // Double-check that the user has permission to edit the field.
+  if (!_date_today_can_edit($data['field_name'], $data['entity_type'], $entity)) {
+    return;
+  }
+
+  // Decide which keys to update in the date object.
+  $keys = array('value');
+  if (!empty($form_state['values']['date_component'])) {
+    if ($form_state['values']['date_component'] === 'both') {
+      $keys = array('value', 'value2');
+    }
+    else {
+      $keys = array($form_state['values']['date_component']);
+    }
+  }
+
+  // Update and save the entity.
+  foreach ($keys as $date_component) {
+    $entity->{$data['field_name']}[$langcode][$data['delta']][$date_component] = format_date(REQUEST_TIME, 'custom', 'Y-m-d H:i:s', 'UTC');
+  }
+  if (!_date_today_save_entity($data['entity_type'], $entity)) {
+    return;
+  }
+
+  // Render the date field with it's new value, and replace it in the form
+  // cache.
+  $instance = field_info_instance($data['entity_type'], $data['field_name'], $data['bundle']);
+  $display = isset($instance['display'][$data['view_mode']]) ? $data['view_mode'] : 'default';
+  $output = date_field_formatter_view(
+    $data['entity_type'],
+    $entity,
+    field_info_field($data['field_name']),
+    $instance,
+    $langcode,
+    field_get_items($data['entity_type'], $entity, $data['field_name'], $langcode),
+    $instance['display'][$display]
+  );
+  $form_state['build_info']['args'][0] = $output[$data['delta']];
+
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * AJAX callback for Date Today forms.
+ */
+function date_today_replace_date_display($form, $form_state) {
+  return $form;
+}
+
+/**
+ * Helper function to save an entity, since it can be convoluted.
+ *
+ * @param string $entity_type
+ * @param object $entity
+ *
+ * @return boolean
+ *   Whether or not the entity could be saved.
+ */
+function _date_today_save_entity($entity_type, $entity) {
+  switch ($entity_type) {
+    case 'node':
+      node_save($entity);
+      break;
+    case 'user':
+      user_save($entity);
+      break;
+    case 'taxonomy_term':
+      taxonomy_term_save($entity);
+      break;
+    default:
+      if (function_exists('entity_save')) {
+        entity_save($entity);
+      }
+      else {
+        drupal_set_message('The date was not saved correctly', 'error');
+        watchdog('date_today', 'Entity of type %type could not be saved. Try installing the !entity_api.', array(
+          '%type' => $entity_type,
+          '!link' => l('Entity API', 'http://drupal.org/project/entity'),
+        ), WATCHDOG_ERROR);
+        return FALSE;
+      }
+      break;
+  }
+
+  return TRUE;
+}
+
+/**
+ * Helper function to see if the current user can edit a given field.
+ *
+ * @param string $field_name
+ * @param string $entity_type
+ * @param object $entity
+ *
+ * @return boolean
+ */
+function _date_today_can_edit($field_name, $entity_type, $entity) {
+  // Check to see if the user can edit the entity. This is particularly obtuse
+  // in Drupal 7.
+  switch ($entity_type) {
+    case 'node':
+      $entity_access = node_access('update', $entity);
+      break;
+    case 'user':
+      $entity_access = user_edit_access($entity);
+      break;
+    case 'taxonomy_term':
+      $entity_access = taxonomy_term_edit_access($entity);
+      break;
+    default:
+      // If we are dealing with some other kind of entity, require the entity
+      // module to define access in a sane way.
+      $entity_access = function_exists('entity_access') && entity_access('edit', $entity_type, $entity);
+      break;
+  }
+
+  if (!$entity_access) {
+    return FALSE;
+  }
+
+  // If the user can edit the entity, check to see if they can edit the field.
+  return field_access('edit', field_info_field($field_name), $entity_type, $entity);
+}

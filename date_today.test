@@ -1,0 +1,88 @@
+<?php
+
+/**
+ * @file
+ * Contains unit and functional tests for the Date Today module.
+ */
+
+class DateTodayUiTests extends DrupalWebTestCase {
+  protected $user, $content_type;
+
+  public static function getInfo() {
+    return array(
+      'name' => 'UI Tests',
+      'description' => 'Ensure that Date Today functionality works correctly in the UI.',
+      'group' => 'Date Today',
+    );
+  }
+
+  public function setUp() {
+    parent::setUp(array('date_today', 'field_ui', 'text'));
+    $this->content_type = $this->drupalCreateContentType();
+  }
+
+  /**
+   * Tests that the Date Today checkbox appears on the field instance settings
+   * page for date fields.
+   */
+  public function testDateTodayButtonAppearsCorrectly() {
+    $this->user = $this->drupalCreateUser(array('bypass node access'));
+    $this->drupalLogin($this->user);
+    $this->createDateField();
+    $node = $this->createNodeWithDateField();
+    $content = $this->drupalGet('node/' . $node->nid);
+    $this->assertRaw('value="' . t('Set to Current Date and Time') . '"', 'Date Today button appears correctly.');
+  }
+
+  /**
+   * Tests that the Date Today checkbox appears on the field instance settings
+   * page for date fields.
+   */
+  public function testDateTodayButtonDoesNotAppearForUsersWithoutPermission() {
+    $this->user = $this->drupalCreateUser(array('access content'));
+    $this->drupalLogin($this->user);
+    $this->createDateField();
+    $node = $this->createNodeWithDateField();
+    $content = $this->drupalGet('node/' . $node->nid);
+    $this->assertNoRaw('value="' . t('Set to Current Date and Time') . '"', 'Date Today button does not appear.');
+  }
+
+  /**
+   * Helper method to create a date field.
+   *
+   * @param string $name
+   * @param boolean $enabled
+   *   Whether or not Date Today is enabled for the field display.
+   */
+  protected function createDateField($name = 'field_date', $enabled = TRUE) {
+    field_create_field(array('field_name' => $name, 'type' => 'datetime'));
+    $instance = field_create_instance(array(
+      'field_name' => $name,
+      'entity_type' => 'node',
+      'bundle' => $this->content_type->type,
+    ));
+
+    if ($enabled) {
+      $instance['display']['default']['settings']['date_today'] = TRUE;
+      field_update_instance($instance);
+    }
+  }
+
+  /**
+   * Helper function to create a node with some date data.
+   *
+   * @param string $date_field
+   *
+   * @return object
+   *   The node.
+   */
+  protected function createNodeWithDateField($date_field = 'field_date') {
+    return $this->drupalCreateNode(array(
+      'type' => $this->content_type->type,
+      $date_field => array(LANGUAGE_NONE => array(array(
+        'value' => format_date(time() - 30000, 'custom', 'Y-m-d H:i:s', 'UTC'),
+        'value2' => format_date(time() - 20000, 'custom', 'Y-m-d H:i:s', 'UTC'),
+      ))),
+    ));
+  }
+}
