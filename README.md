@@ -5,5 +5,5 @@ the value of the field to the current date and time.
 For instructions on how to use it, see the [screencast][screencast] explaining
 its usage and how I wrote it.
 
-[moduleoff]: http://moduleoff.com
-[screencast]: http://youtube.com
+[moduleoff]: http://moduleoff.com/contest/add-link-every-article-node-updates-date-field-today-using-ajax
+[screencast]: http://www.youtube.com/watch?v=SPuj2pqEq7Q
