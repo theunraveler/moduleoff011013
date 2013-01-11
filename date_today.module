@@ -179,6 +179,9 @@ function _date_today_save_entity($entity_type, $entity) {
     case 'taxonomy_term':
       taxonomy_term_save($entity);
       break;
+    case 'comment':
+      comment_save($entity);
+      break;
     default:
       if (function_exists('entity_save')) {
         entity_save($entity);
@@ -218,6 +221,9 @@ function _date_today_can_edit($field_name, $entity_type, $entity) {
       break;
     case 'taxonomy_term':
       $entity_access = taxonomy_term_edit_access($entity);
+      break;
+    case 'comment':
+      $entity_access = comment_access('edit', $entity);
       break;
     default:
       // If we are dealing with some other kind of entity, require the entity
